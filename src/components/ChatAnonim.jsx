@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { addDoc, collection, query, orderBy, onSnapshot, getDocs } from "firebase/firestore";
-import { db, auth } from "../firebase";
+import { db, auth } from "../supabase";
 import axios from "axios";
 import Swal from "sweetalert2";
 
