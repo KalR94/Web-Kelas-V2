@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { supabase } from "../supabase"; // pastikan sudah buat file supabase.js
+import { supabase } from "../supabaseClient";
 import { v4 as uuidv4 } from "uuid";
 import Swal from "sweetalert2";
 
@@ -8,148 +8,134 @@ function UploadImage() {
   const [imageList, setImageList] = useState([]);
   const maxUploadSizeInBytes = 10 * 1024 * 1024; // 10MB
   const maxUploadsPerDay = 20;
+  const bucketName = "images"; // pastikan bucket ini sudah kamu buat di Supabase Storage
 
   useEffect(() => {
     listImages();
   }, []);
 
-  // 🔹 Menampilkan daftar gambar dari bucket
+  // 🔹 Ambil semua gambar dari bucket Supabase
   const listImages = async () => {
-    const { data, error } = await supabase.storage.from("images").list("", {
-      limit: 100,
-      sortBy: { column: "created_at", order: "desc" },
-    });
+    try {
+      const { data, error } = await supabase.storage.from(bucketName).list("", {
+        limit: 100,
+        sortBy: { column: "created_at", order: "desc" },
+      });
 
-    if (error) {
-      console.error("Gagal memuat daftar gambar:", error);
-      return;
+      if (error) throw error;
+
+      const urls = data.map((file) => {
+        const { data: publicUrl } = supabase.storage
+          .from(bucketName)
+          .getPublicUrl(file.name);
+        return publicUrl.publicUrl;
+      });
+
+      setImageList(urls);
+    } catch (err) {
+      console.error("Gagal memuat gambar:", err.message);
     }
-
-    // Ambil URL publik untuk setiap gambar
-    const urls = data.map((item) =>
-      supabase.storage.from("images").getPublicUrl(item.name).data.publicUrl
-    );
-
-    setImageList(urls);
   };
 
-  // 🔹 Upload gambar baru
+  // 🔹 Upload gambar ke Supabase Storage
   const uploadImage = async () => {
     if (!imageUpload) return;
 
     const uploadedImagesCount = parseInt(localStorage.getItem("uploadedImagesCount")) || 0;
     const lastUploadDate = localStorage.getItem("lastUploadDate");
+    const today = new Date().toDateString();
+
+    if (lastUploadDate && lastUploadDate !== today) {
+      // reset harian
+      localStorage.setItem("uploadedImagesCount", 0);
+      localStorage.setItem("lastUploadDate", today);
+    }
 
     if (uploadedImagesCount >= maxUploadsPerDay) {
       Swal.fire({
         icon: "error",
-        title: "Oops...",
-        text: "You have reached the maximum uploads for today.",
-        customClass: {
-          container: "sweet-alert-container",
-        },
+        title: "Limit Reached",
+        text: "You have reached the maximum uploads for today (20).",
       });
       return;
-    }
-
-    if (lastUploadDate && new Date(lastUploadDate).toDateString() !== new Date().toDateString()) {
-      // Reset count jika sudah hari baru
-      localStorage.setItem("uploadedImagesCount", 0);
     }
 
     if (imageUpload.size > maxUploadSizeInBytes) {
       Swal.fire({
         icon: "error",
-        title: "Oops...",
-        text: "The maximum size for a photo is 10MB",
-        customClass: {
-          container: "sweet-alert-container",
-        },
+        title: "File too large",
+        text: "Maximum allowed size is 10MB.",
       });
       return;
     }
 
-    const uniqueFileName = `${uuidv4()}-${imageUpload.name}`;
+    try {
+      const fileExt = imageUpload.name.split(".").pop();
+      const fileName = `${uuidv4()}.${fileExt}`;
+      const filePath = `${fileName}`;
 
-    // ⬆️ Upload ke bucket “images”
-    const { error: uploadError } = await supabase.storage
-      .from("images")
-      .upload(uniqueFileName, imageUpload);
+      const { error: uploadError } = await supabase.storage
+        .from(bucketName)
+        .upload(filePath, imageUpload);
 
-    if (uploadError) {
-      console.error("Gagal upload gambar:", uploadError);
+      if (uploadError) throw uploadError;
+
+      const { data } = supabase.storage.from(bucketName).getPublicUrl(filePath);
+      setImageList((prev) => [data.publicUrl, ...prev]);
+
+      // Simpan jumlah upload harian
+      localStorage.setItem("uploadedImagesCount", uploadedImagesCount + 1);
+      localStorage.setItem("lastUploadDate", today);
+
+      Swal.fire({
+        icon: "success",
+        title: "Upload Berhasil",
+        text: "Gambar kamu berhasil diupload!",
+      });
+
+      setImageUpload(null);
+    } catch (err) {
+      console.error("Upload gagal:", err.message);
       Swal.fire({
         icon: "error",
         title: "Upload Failed",
-        text: uploadError.message,
+        text: err.message,
       });
-      return;
     }
-
-    // 🔗 Dapatkan URL publik gambar
-    const { data } = supabase.storage.from("images").getPublicUrl(uniqueFileName);
-    setImageList((prev) => [data.publicUrl, ...prev]);
-
-    localStorage.setItem("uploadedImagesCount", uploadedImagesCount + 1);
-    localStorage.setItem("lastUploadDate", new Date().toISOString());
-
-    Swal.fire({
-      icon: "success",
-      title: "Success!",
-      text: "Your image has been successfully uploaded.",
-      customClass: {
-        container: "sweet-alert-container",
-      },
-    });
-
-    setImageUpload(null);
-  };
-
-  const handleImageChange = (event) => {
-    setImageUpload(event.target.files[0]);
   };
 
   return (
     <div className="flex flex-col justify-center items-center">
       <div className="text-center mb-4">
-        <h1 className="text-1xl md:text-2xl md:px-10 font-bold mb-4 w-full text-white">
-          Upload Your Classroom Memories
-        </h1>
+        <h1 className="text-2xl font-bold text-white">Upload Your Classroom Memories</h1>
       </div>
 
       <div className="mx-auto p-4">
         <form>
           <div className="mb-4">
-            <input type="file" id="imageUpload" className="hidden" onChange={handleImageChange} />
+            <input type="file" id="imageUpload" className="hidden" onChange={(e) => setImageUpload(e.target.files[0])} />
             <label
               htmlFor="imageUpload"
-              className="cursor-pointer border-dashed border-2 border-gray-400 rounded-lg p-4 w-56 h-auto flex items-center justify-center"
+              className="cursor-pointer border-dashed border-2 border-gray-400 rounded-lg p-4 w-56 flex items-center justify-center"
             >
               {imageUpload ? (
-                <div className="w-full h-full overflow-hidden">
-                  <img
-                    src={URL.createObjectURL(imageUpload)}
-                    alt="Preview Gambar"
-                    className="w-full h-full object-cover"
-                  />
-                </div>
+                <img
+                  src={URL.createObjectURL(imageUpload)}
+                  alt="Preview"
+                  className="w-full h-full object-cover rounded"
+                />
               ) : (
-                <div className="text-center px-5 py-8">
+                <div className="text-center px-5 py-8 text-white opacity-70">
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
-                    className="h-12 w-12 mx-auto text-gray-400"
+                    className="h-10 w-10 mx-auto mb-2"
                   >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                    />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                   </svg>
-                  <p className="text-white opacity-60">Click to select an image</p>
+                  Click to select an image
                 </div>
               )}
             </label>
@@ -159,16 +145,16 @@ function UploadImage() {
 
       <button
         type="button"
-        className="py-2.5 w-[60%] mb-0 md:mb-2 text-sm font-medium text-gray-900 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-200 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-600 dark:hover:text-white dark:hover:bg-gray-700"
         onClick={uploadImage}
+        className="py-2.5 w-[60%] text-sm font-medium bg-white text-gray-900 rounded-lg border border-gray-300 hover:bg-gray-100"
       >
         UPLOAD
       </button>
 
-      {/* 🔹 Menampilkan daftar gambar */}
-      <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-        {imageList.map((url, idx) => (
-          <img key={idx} src={url} alt={`uploaded-${idx}`} className="rounded-lg shadow-md" />
+      {/* Daftar Gambar */}
+      <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4 w-full max-w-2xl">
+        {imageList.map((url, i) => (
+          <img key={i} src={url} alt={`uploaded-${i}`} className="rounded-lg shadow-md" />
         ))}
       </div>
     </div>
