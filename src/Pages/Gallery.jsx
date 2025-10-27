@@ -4,11 +4,11 @@ import "slick-carousel/slick/slick.css"
 import "slick-carousel/slick/slick-theme.css"
 import ButtonSend from "../components/ButtonSend"
 import ButtonRequest from "../components/ButtonRequest"
-import { getStorage, ref, listAll, getDownloadURL } from "firebase/storage"
 import Modal from "@mui/material/Modal"
-import { Box, IconButton } from "@mui/material"
+import { IconButton } from "@mui/material"
 import CloseIcon from "@mui/icons-material/Close"
-import { useSpring, animated } from "@react-spring/web" // Import the necessary components
+import { useSpring, animated } from "@react-spring/web"
+import { supabase } from "../supabaseClient" // 🔥 Supabase Client
 
 const Carousel = () => {
 	const [images, setImages] = useState([])
@@ -17,32 +17,36 @@ const Carousel = () => {
 
 	const modalFade = useSpring({
 		opacity: open ? 1 : 0,
-		config: { duration: 300 }, // Adjust the duration as needed
+		config: { duration: 300 },
 	})
 
-	// Fungsi untuk mengambil daftar gambar dari Firebase Storage
-	const fetchImagesFromFirebase = async () => {
+	// 🔥 Ganti Firebase ke Supabase Storage
+	const fetchImagesFromSupabase = async () => {
 		try {
-			const storage = getStorage() // Mendapatkan referensi Firebase Storage
-			const storageRef = ref(storage, "GambarAman/") // Menggunakan ref dengan storage
+			const { data, error } = await supabase.storage
+				.from("GambarAman")
+				.list("", { limit: 100, sortBy: { column: "name", order: "asc" } })
 
-			const imagesList = await listAll(storageRef) // Menggunakan listAll untuk mendapatkan daftar gambar
+			if (error) throw error
 
-			const imageURLs = await Promise.all(
-				imagesList.items.map(async (item) => {
-					const url = await getDownloadURL(item) // Menggunakan getDownloadURL untuk mendapatkan URL gambar
-					return url
-				}),
-			)
+			// Ambil URL publik untuk setiap file
+			const urls = data
+				.filter((file) => file.name.match(/\.(jpg|jpeg|png|gif|webp)$/i)) // hanya gambar
+				.map(
+					(file) =>
+						supabase.storage
+							.from("GambarAman")
+							.getPublicUrl(file.name).data.publicUrl
+				)
 
-			setImages(imageURLs)
+			setImages(urls)
 		} catch (error) {
-			console.error("Error fetching images from Firebase Storage:", error)
+			console.error("Error fetching images from Supabase Storage:", error.message)
 		}
 	}
 
 	useEffect(() => {
-		fetchImagesFromFirebase()
+		fetchImagesFromSupabase()
 	}, [])
 
 	const settings = {
@@ -89,9 +93,12 @@ const Carousel = () => {
 
 	return (
 		<>
-			<div className="text-white opacity-60 text-base font-semibold mb-4 mx-[10%] mt-10 lg:text-center lg:text-3xl lg:mb-8" id="Gallery">
+			<div
+				className="text-white opacity-60 text-base font-semibold mb-4 mx-[10%] mt-10 lg:text-center lg:text-3xl lg:mb-8"
+				id="Gallery">
 				Class Gallery
 			</div>
+
 			<div id="Carousel">
 				<Slider {...settings}>
 					{images.map((imageUrl, index) => (
@@ -115,7 +122,6 @@ const Carousel = () => {
 				open={open}
 				onClose={handleCloseModal}
 				aria-labelledby="image-modal"
-				aria-describedby="image-modal-description"
 				className="flex justify-center items-center">
 				<animated.div
 					style={{
@@ -130,10 +136,7 @@ const Carousel = () => {
 					}}
 					className="p-2 rounded-lg">
 					<IconButton
-						edge="end"
-						color="inherit"
 						onClick={handleCloseModal}
-						aria-label="close"
 						sx={{
 							position: "absolute",
 							top: "12px",
@@ -146,7 +149,7 @@ const Carousel = () => {
 					<div className="w-full">
 						<img
 							src={selectedImage}
-							alt="Selected Image"
+							alt="Selected"
 							style={{ maxWidth: "100%", maxHeight: "100vh" }}
 						/>
 					</div>
